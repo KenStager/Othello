@@ -74,9 +74,9 @@ class MCTS:
         planes = board.encode()[None, ...]  # (1,4,8,8)
         import torch
         with torch.no_grad():
-            logits, value = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
-            logits = logits[0].cpu().numpy()
-            value = float(value[0].cpu().item())
+            output = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
+            logits = output.policy_logits[0].cpu().numpy()
+            value = float(output.value_win[0].cpu().item())
         mask = board.valid_action_mask()
         probs = softmax_masked(logits, mask, temp=1.0)
         node = MCTSNode(prior=probs, player_to_move=board.player)
@@ -90,9 +90,9 @@ class MCTS:
         planes = board.encode()[None, ...]
         import torch
         with torch.no_grad():
-            logits, value = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
-            logits = logits[0].cpu().numpy()
-            value = float(value[0].cpu().item())
+            output = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
+            logits = output.policy_logits[0].cpu().numpy()
+            value = float(output.value_win[0].cpu().item())
         mask = board.valid_action_mask()
         probs = softmax_masked(logits, mask, temp=1.0)
         return probs, value, mask
