@@ -9,9 +9,8 @@ class ReplayBuffer:
         self.buffer = deque(maxlen=capacity)
         self.total_added = 0
 
-    def add(self, s, pi, z):
-        # s: (4,8,8) float32, pi: (65,) float32, z: float scalar in [-1,1]
-        self.buffer.append((s.astype(np.float32), pi.astype(np.float32), float(z)))
+    def add(self, sample):
+        self.buffer.append(sample)
         self.total_added += 1
         if self.total_added % 5000 == 0:
             self._save_shard()
@@ -26,7 +25,12 @@ class ReplayBuffer:
 
     def sample(self, batch_size):
         batch = random.sample(self.buffer, min(batch_size, len(self.buffer)))
-        s = np.stack([b[0] for b in batch], axis=0)
-        pi = np.stack([b[1] for b in batch], axis=0)
-        z = np.array([b[2] for b in batch], dtype=np.float32)
-        return s, pi, z
+        states = np.stack([b["state"] for b in batch], axis=0)
+        policies = np.stack([b["policy"] for b in batch], axis=0)
+        value_win = np.array([b["value_win"] for b in batch], dtype=np.float32)
+        value_score = np.array([b["value_score"] for b in batch], dtype=np.float32)
+        mobility = np.stack([b["mobility"] for b in batch], axis=0)
+        stability = np.stack([b["stability"] for b in batch], axis=0)
+        corner = np.stack([b["corner"] for b in batch], axis=0)
+        parity = np.stack([b["parity"] for b in batch], axis=0)
+        return states, policies, value_win, value_score, mobility, stability, corner, parity
