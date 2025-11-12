@@ -1,0 +1,44 @@
+# Minimal defaults chosen for quick startup on CPU.
+seed: 42
+device: "cpu"   # "cuda" if available
+
+paths:
+  checkpoint_dir: "data/checkpoints"
+  replay_dir: "data/replay"
+
+game:
+  board_size: 8
+  temperature_moves: 12   # Tau=1 for the first N moves, then tau->0
+  dirichlet_alpha: 0.15
+  dirichlet_frac: 0.25    # How much noise to mix at root
+
+mcts:
+  cpuct: 1.5
+  simulations: 200        # Keep modest for CPU
+  num_threads: 1
+  reuse_tree: true
+
+selfplay:
+  games_per_iter: 20
+  max_moves: 120
+  save_every_iters: 1
+
+model:
+  channels: 64
+  residual_blocks: 8
+  l2_weight_decay: 1.0e-4
+
+train:
+  batch_size: 256
+  steps_per_iter: 200
+  lr: 1.0e-2
+  lr_min: 1.0e-3
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  replay_capacity: 200000
+  min_replay_to_train: 5000
+
+gate:
+  eval_games: 100
+  promote_win_rate: 0.55   # >=55% wins promotes
+  time_limit_ms: 50        # per-move time cap during evaluates (soft)
