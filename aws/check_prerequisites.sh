@@ -73,7 +73,7 @@ echo "4. Checking IAM permissions..."
 echo "   Testing EC2 permissions..."
 
 # Test EC2 describe permission
-if aws ec2 describe-instances --max-results 1 &> /dev/null; then
+if aws ec2 describe-instances --max-results 5 &> /dev/null; then
     echo -e "${GREEN}✓${NC} EC2 describe permission"
 else
     echo -e "${RED}✗${NC} Missing EC2 permissions"
