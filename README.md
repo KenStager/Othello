@@ -62,4 +62,9 @@ data/
 - Turn on GPU by setting `device: cuda` in `config.yaml` if you have a CUDA build.
 - This is a **teaching scaffold**: clarity over micro-optimizations.
 
+### Documentation
+
+* **[CLAUDE.md](CLAUDE.md)** — Guidance for Claude Code when working in this repository (current codebase state)
+* **[ENGINEERING_GUIDE.md](ENGINEERING_GUIDE.md)** — Comprehensive engineering design, intent, and roadmap (forward-looking)
+
 MIT License.

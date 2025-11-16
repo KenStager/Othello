@@ -1,8 +1,33 @@
-import argparse, torch, numpy as np
+import argparse, torch, numpy as np, os
 from src.utils.config import load_config
 from src.othello.game import Game
 from src.net.model import OthelloNet
 from src.mcts.mcts import MCTS
+
+def setup_device(cfg):
+    """
+    Setup compute device with MPS support and memory management.
+    Fallback order: CUDA → MPS → CPU
+    """
+    device_cfg = cfg['device']
+
+    # CUDA (NVIDIA GPU)
+    if torch.cuda.is_available() and device_cfg == "cuda":
+        return torch.device("cuda")
+
+    # MPS (Apple Silicon GPU)
+    if torch.backends.mps.is_available() and device_cfg == "mps":
+        device = torch.device("mps")
+        # Set memory fraction for inference (can use more since no training)
+        torch.mps.set_per_process_memory_fraction(0.9)
+        # Enable fallback to CPU for unsupported ops
+        os.environ.setdefault('PYTORCH_ENABLE_MPS_FALLBACK', '1')
+        return device
+
+    # CPU (fallback)
+    if device_cfg != "cpu":
+        print(f"Warning: {device_cfg} not available, using CPU")
+    return torch.device("cpu")
 
 def render(board):
     sym = {0:'.', 1:'B', -1:'W'}
@@ -17,7 +42,8 @@ def render(board):
 
 def main(cfg_path, checkpoint=None):
     cfg = load_config(cfg_path)
-    device = torch.device(cfg['device']) if torch.cuda.is_available() or cfg['device']=="cpu" else torch.device("cpu")
+    device = setup_device(cfg)
+    print(f"Using device: {device}")
     net = OthelloNet(in_channels=4, channels=cfg['model']['channels'],
                      residual_blocks=cfg['model']['residual_blocks']).to(device)
     if checkpoint:

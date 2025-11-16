@@ -1,27 +1,46 @@
 # Minimal defaults chosen for quick startup on CPU.
 seed: 42
-device: "cpu"   # "cuda" if available
+device: "mps"   # Options: "mps" (Apple Silicon GPU), "cuda" (NVIDIA), "cpu"
+                # MPS uses 75% of recommended memory (leaves ~15-20GB buffer on 64GB system)
 
 paths:
   checkpoint_dir: "data/checkpoints"
   replay_dir: "data/replay"
+  opening_suite: "data/openings/rot64.json"
+  il_data: "data/il_bootstrap"
+
+checkpoint:                         # Phase 1: Enhanced checkpoint management
+  save_optimizer: true              # Save optimizer state (AdamW momentum buffers)
+  save_scheduler: true              # Save LR scheduler state
+  verify_on_load: true              # Run validation checks on checkpoint load
 
 game:
   board_size: 8
-  temperature_moves: 12   # Tau=1 for the first N moves, then tau->0
+  temperature_moves: 12   # Deprecated: use selfplay.temp_schedule instead
   dirichlet_alpha: 0.15
   dirichlet_frac: 0.25    # How much noise to mix at root
 
 mcts:
   cpuct: 1.5
-  simulations: 200        # Keep modest for CPU
+  simulations: 200        # Restored to 200 (batching provides the speedup, not sim reduction)
   num_threads: 1
-  reuse_tree: true
+  reuse_tree: false       # Disabled for batched MCTS (batching incompatible with tree reuse)
+  tt_enabled: false       # Disabled for batched MCTS (TT only works with tree reuse)
+  zobrist: false          # Disabled for batched MCTS
+  batch_size: 64          # Batch size for batched inference
+  use_batching: true      # Re-enable batching (provides ~4x speedup)
 
 selfplay:
-  games_per_iter: 20
+  games_per_iter: 100     # Research-aligned: 100 games per iteration
+  num_workers: 1          # Phase 1: Serial mode (parallel implementation has issues)
   max_moves: 120
   save_every_iters: 1
+  temp_schedule:          # Ablation Config C: Gentle extended schedule (reduces score margins to ±14.6 discs)
+    open_to: 20           # Plies 1-20: τ=1.0 (extended opening exploration)
+    mid_to: 40            # Plies 21-40: τ=0.15 (gentle midgame)
+    open_tau: 1.0
+    mid_tau: 0.15         # Gentler than aggressive 0.25
+    late_tau: 0.05        # Minimal exploration (not deterministic 0.0)
 
 model:
   channels: 64
@@ -29,16 +48,53 @@ model:
   l2_weight_decay: 1.0e-4
 
 train:
-  batch_size: 256
+  batch_size: 256         # Can increase to 512+ with MPS/GPU if no OOM
   steps_per_iter: 200
-  lr: 1.0e-2
-  lr_min: 1.0e-3
+  lr: 1.0e-3              # Stage 1: Lowered from 1.0e-2 to prevent overfitting
+  lr_min: 1.0e-4          # Stage 1: Lowered from 1.0e-3
   weight_decay: 1.0e-4
   grad_clip: 1.0
-  replay_capacity: 200000
-  min_replay_to_train: 5000
+  replay_capacity: 500000  # Increased from 200k for better diversity (~10 iterations of data)
+  min_replay_to_train: 10000  # Stage 1: Increased from 5000 for more diverse initial data
+  phase_mix: [0.4, 0.4, 0.2]       # Opening/midgame/endgame sampling ratios
+  phase_weighted_score: true       # Enable phase-weighted score loss
+  score_weight_base: 0.3           # Base weight for score loss
+  amp_enabled: false               # Enable automatic mixed precision (set true for GPU)
+  replay_cleanup:                  # Automatic replay shard cleanup
+    enabled: true                  # Auto-delete old shards to prevent unbounded disk usage
+    keep_recent: 3                 # Keep N most recent shards (safety margin)
+    keep_milestone_every: 50000    # Keep milestone shards at intervals (50k, 100k, 150k, etc.)
+  il_mixing:                       # Imitation learning bootstrap
+    enabled: true                  # IL data ready (50k expert samples from WTHOR)
+    ratio: 0.2                     # Mix 20% IL data
+    iters: 20                      # Fade out over 20 iterations
+  scheduler:                       # Learning rate scheduler (Phase 1: Emergency Stabilization)
+    enabled: true                  # Enable LR scheduling for training stability
+    type: "cosine_warmrestarts"    # Cosine annealing with warm restarts (SGDR)
+    T_0: 10                        # Iterations per cycle (restart every 10 iterations)
+    T_mult: 1                      # Cycle length multiplier (1 = equal cycles)
+    eta_min: 1.0e-4                # Minimum LR (matches lr_min)
 
 gate:
-  eval_games: 100
-  promote_win_rate: 0.55   # >=55% wins promotes
-  time_limit_ms: 50        # per-move time cap during evaluates (soft)
+  eval_games: 40                   # Research-aligned: 40 games = ±15.5% CI at 55% threshold (22/40 wins needed)
+  promote_win_rate: 0.55           # >=55% wins promotes (22/40 wins needed)
+  max_loss_rate_multiplier: 1.10   # Loss rate can't worsen by >10%
+  time_limit_ms: 50                # per-move time cap during evaluates (soft)
+
+oracle:                            # Endgame oracle (Edax integration)
+  use: true                        # Oracle enabled - Edax installed and configured
+  empties_threshold: 14            # Delegate to oracle when empties <= 14
+  edax_path: "third_party/edax/bin/edax"
+  time_limit_ms: 100
+
+logging:                           # Enhanced logging
+  verbose: true                    # Enable detailed game-by-game output
+  train_log_interval: 50           # Print loss breakdown every N steps
+  tensorboard: true                # Phase 1: Enable TensorBoard for real-time monitoring
+  tensorboard_dir: "runs"          # TensorBoard log directory
+  wandb: false                     # Optional W&B integration
+  metrics:                         # Metrics to track
+    - entropy_by_phase
+    - q_hist_by_phase
+    - aux_losses
+    - calibration

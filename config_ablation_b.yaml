@@ -1,0 +1,89 @@
+# Ablation Config B: MOVE TO RESEARCH-STANDARD MCTS
+# Purpose: Test if moving from 150→200 sims (research baseline) reduces score margins
+# Hypothesis: Below-standard MCTS depth is causing weak play
+
+seed: 42
+device: "mps"
+
+paths:
+  checkpoint_dir: "data/ablation_b/checkpoints"
+  replay_dir: "data/ablation_b/replay"
+  opening_suite: "data/openings/rot64.json"
+  il_data: "data/il_bootstrap"
+
+game:
+  board_size: 8
+  temperature_moves: 12
+  dirichlet_alpha: 0.15
+  dirichlet_frac: 0.25
+
+mcts:
+  cpuct: 1.5
+  simulations: 200        # FIX: Move to research-standard MCTS (150 → 200 sims)
+  num_threads: 1
+  reuse_tree: true
+  tt_enabled: false
+  zobrist: true
+  batch_size: 64
+  use_batching: true
+
+selfplay:
+  games_per_iter: 100     # Research-aligned: 100 games per iteration (2.5:1 training:eval ratio)
+  max_moves: 120
+  save_every_iters: 1
+  temp_schedule:          # BASELINE: Keep aggressive schedule
+    open_to: 12           # τ=1.0 for plies 1-12
+    mid_to: 20            # τ=0.25 for plies 13-20
+    open_tau: 1.0
+    mid_tau: 0.25
+    late_tau: 0.0         # τ=0.0 for plies 21+ (deterministic)
+
+model:
+  channels: 64
+  residual_blocks: 8
+  l2_weight_decay: 1.0e-4
+
+train:
+  batch_size: 256
+  steps_per_iter: 200
+  lr: 1.0e-3
+  lr_min: 1.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  replay_capacity: 200000
+  min_replay_to_train: 10000
+  phase_mix: [0.4, 0.4, 0.2]
+  phase_weighted_score: true
+  score_weight_base: 0.3
+  amp_enabled: false
+  replay_cleanup:
+    enabled: true
+    keep_recent: 3
+    keep_milestone_every: 50000
+  il_mixing:
+    enabled: false
+    ratio: 0.2
+    iters: 20
+
+gate:
+  eval_games: 40          # Research-aligned: 40 games (2.5:1 training:eval ratio)
+  promote_win_rate: 0.55  # Need 22/40 wins to promote
+  max_loss_rate_multiplier: 1.10
+  time_limit_ms: 50
+
+oracle:
+  use: false
+  empties_threshold: 14
+  edax_path: "third_party/edax/bin/edax"
+  time_limit_ms: 100
+
+logging:
+  verbose: true
+  train_log_interval: 50
+  tensorboard: false
+  wandb: false
+  metrics:
+    - entropy_by_phase
+    - q_hist_by_phase
+    - aux_losses
+    - calibration

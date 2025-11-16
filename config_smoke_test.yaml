@@ -1,0 +1,77 @@
+# Smoke test config - minimal settings for quick testing
+seed: 42
+
+game:
+  board_size: 8
+  dirichlet_alpha: 0.15
+  dirichlet_frac: 0.25
+
+mcts:
+  cpuct: 1.5
+  simulations: 50          # Reduced for quick test
+  num_threads: 1
+  reuse_tree: true
+  tt_enabled: true
+  zobrist: true
+  batch_size: 64
+  use_batching: false
+
+selfplay:
+  games_per_iter: 2        # Just 2 games for smoke test
+  num_workers: 1           # Serial mode first
+  max_moves: 120
+  save_every_iters: 1
+  temp_schedule:
+    open_to: 20
+    mid_to: 40
+    open_tau: 1.0
+    mid_tau: 0.15
+    late_tau: 0.0
+
+model:
+  channels: 64
+  residual_blocks: 8
+
+training:
+  batch_size: 256
+  train_steps_per_iter: 20  # Reduced for quick test
+  lr: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  loss_weights:
+    policy: 1.0
+    value_win: 1.0
+    value_score: 0.3
+    mobility: 0.2
+    stability: 0.2
+    corner: 0.1
+    parity: 0.1
+  warmup_iters: 2           # Reduced for quick test
+  il_mixing:
+    enabled: false           # Disable for smoke test
+
+gating:
+  enabled: false            # Disable for smoke test
+  games: 10
+  win_rate_threshold: 0.55
+
+oracle:
+  use: true
+  empties_threshold: 14
+  edax_path: "third_party/edax/bin/edax"
+  time_limit_ms: 100
+
+paths:
+  data_dir: "data"
+  checkpoint_dir: "data/checkpoints"
+  replay_dir: "data/replay"
+  log_dir: "logs"
+  il_dir: "data/il"
+  opening_suite: "data/openings/rot64.json"
+
+replay:
+  capacity: 200000
+  min_size: 1000           # Reduced for quick test
+  save_every: 5000
+
+device: "mps"

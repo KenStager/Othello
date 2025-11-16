@@ -1,0 +1,81 @@
+# IL Smoke Test Config: Quick test of IL mixing functionality
+seed: 42
+device: "mps"
+
+paths:
+  checkpoint_dir: "data/il_smoke_test/checkpoints"
+  replay_dir: "data/il_smoke_test/replay"
+  opening_suite: "data/openings/rot64.json"
+  il_data: "data/il_bootstrap"  # 50k expert samples from WTHOR
+
+game:
+  board_size: 8
+  temperature_moves: 12
+  dirichlet_alpha: 0.15
+  dirichlet_frac: 0.25
+
+mcts:
+  cpuct: 1.5
+  simulations: 50       # Reduced for smoke test
+  num_threads: 1
+  reuse_tree: true
+  tt_enabled: true
+  zobrist: true
+  batch_size: 64
+  use_batching: false
+
+selfplay:
+  games_per_iter: 5     # Minimal for smoke test
+  max_moves: 120
+  save_every_iters: 1
+  temp_schedule:
+    open_to: 20
+    mid_to: 40
+    open_tau: 1.0
+    mid_tau: 0.15
+    late_tau: 0.05
+
+model:
+  channels: 64
+  residual_blocks: 8
+  l2_weight_decay: 1.0e-4
+
+train:
+  batch_size: 64        # Reduced for smoke test
+  steps_per_iter: 20    # Minimal for smoke test
+  lr: 1.0e-3
+  lr_min: 1.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  replay_capacity: 10000
+  min_replay_to_train: 500  # Low threshold for smoke test
+  phase_mix: [0.4, 0.4, 0.2]
+  phase_weighted_score: true
+  score_weight_base: 0.3
+  amp_enabled: false
+  replay_cleanup:
+    enabled: false  # Disable cleanup for smoke test
+  il_mixing:                # TEST IL MIXING
+    enabled: true
+    ratio: 0.2              # 20% IL, 80% RL
+    iters: 3                # Short fade-out for testing
+
+gate:
+  eval_games: 6           # Minimal for smoke test
+  promote_win_rate: 0.55
+  max_loss_rate_multiplier: 1.10
+  time_limit_ms: 50
+
+oracle:
+  use: false
+
+logging:
+  verbose: true
+  train_log_interval: 5   # Frequent logging for smoke test
+  tensorboard: false
+  wandb: false
+  metrics:
+    - entropy_by_phase
+    - q_hist_by_phase
+    - aux_losses
+    - calibration
