@@ -1,0 +1,107 @@
+# Cloud-optimized configuration for AWS g4dn.xlarge (NVIDIA T4 GPU)
+# Optimized for: Parallel self-play + GPU acceleration + Spot instance fault tolerance
+#
+# Key differences from local config:
+# - device: "cuda" (NVIDIA GPU instead of Apple MPS)
+# - num_workers: 8 (parallel self-play on multi-core instance)
+# - batch_size: 128 (larger batches for better GPU saturation)
+# - amp_enabled: true (mixed precision training for NVIDIA GPUs)
+
+seed: 42
+device: "cuda"   # NVIDIA GPU on AWS (auto-falls back to CPU if unavailable)
+
+paths:
+  checkpoint_dir: "data/checkpoints"
+  replay_dir: "data/replay"
+  opening_suite: "data/openings/rot64.json"
+  il_data: "data/il_bootstrap"
+
+checkpoint:
+  save_optimizer: true              # Critical for resuming after Spot termination
+  save_scheduler: true              # Preserve LR schedule across interruptions
+  verify_on_load: true              # Validate checkpoint integrity
+
+game:
+  board_size: 8
+  temperature_moves: 12
+  dirichlet_alpha: 0.15
+  dirichlet_frac: 0.25
+
+mcts:
+  cpuct: 1.5
+  simulations: 200
+  num_threads: 1
+  reuse_tree: false       # Disabled for batched MCTS
+  tt_enabled: false       # Disabled for batched MCTS
+  zobrist: false
+  batch_size: 128         # INCREASED from 64 for better GPU utilization
+  use_batching: true
+
+selfplay:
+  games_per_iter: 100
+  num_workers: 8          # INCREASED from 1 - parallel workers on 4-vCPU instance
+  max_moves: 120
+  save_every_iters: 1     # Save frequently for fault tolerance
+  temp_schedule:
+    open_to: 20
+    mid_to: 40
+    open_tau: 1.0
+    mid_tau: 0.15
+    late_tau: 0.05
+
+model:
+  channels: 64
+  residual_blocks: 8
+  l2_weight_decay: 1.0e-4
+
+train:
+  batch_size: 256
+  steps_per_iter: 200
+  lr: 1.0e-3
+  lr_min: 1.0e-4
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  replay_capacity: 500000
+  min_replay_to_train: 10000
+  phase_mix: [0.4, 0.4, 0.2]
+  phase_weighted_score: true
+  score_weight_base: 0.3
+  amp_enabled: true       # ENABLED - automatic mixed precision for NVIDIA GPUs
+  replay_cleanup:
+    enabled: true
+    keep_recent: 3
+    keep_milestone_every: 50000
+  il_mixing:
+    enabled: true
+    ratio: 0.2
+    iters: 20
+  scheduler:
+    enabled: true
+    type: "cosine_warmrestarts"
+    T_0: 10
+    T_mult: 1
+    eta_min: 1.0e-4
+
+gate:
+  eval_games: 40
+  promote_win_rate: 0.55
+  max_loss_rate_multiplier: 1.10
+  time_limit_ms: 50
+
+oracle:
+  use: true                        # Edax must be installed on AWS instance
+  empties_threshold: 14
+  edax_path: "third_party/edax/bin/edax"  # Ensure this binary is executable
+  time_limit_ms: 100
+
+logging:
+  verbose: true
+  train_log_interval: 50
+  tensorboard: true
+  tensorboard_dir: "runs"
+  wandb: false
+  metrics:
+    - entropy_by_phase
+    - q_hist_by_phase
+    - aux_losses
+    - calibration

@@ -78,8 +78,9 @@ def _play_games_worker(args):
     # Create game_cls callable
     game_cls = lambda: Game(board_size)
 
-    # Reconstruct model on CPU in worker process
-    device = torch.device('cpu')  # Force CPU for workers
+    # Reconstruct model in worker process
+    # Auto-detect CUDA (works on AWS/cloud) or fall back to CPU (for MPS compatibility)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = OthelloNet(
         in_channels=net_config.get('in_channels', 4),
         channels=net_config.get('channels', 64),
