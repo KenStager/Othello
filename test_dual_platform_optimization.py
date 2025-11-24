@@ -170,9 +170,31 @@ def test_throughput(device, optimization_config):
     # Create test positions
     positions = create_test_positions(num_positions=200)
 
-    # Warmup (important for JIT compilation)
-    print("\nWarming up optimized model (JIT compilation)...")
-    _ = eval_opt.evaluate_batch(positions[:10])
+    # Warmup (important for torch.compile() compilation)
+    print("\nWarming up optimized model (torch.compile compilation)...")
+    print("  Note: First compilation with max-autotune mode takes 30-60 seconds")
+
+    # Run multiple warmup iterations to ensure compilation completes
+    warmup_batch_size = 32
+    warmup_iterations = 10  # Run 10 batches to ensure compilation is done
+
+    warmup_start = time.time()
+    for i in range(warmup_iterations):
+        batch_start_idx = (i * warmup_batch_size) % len(positions)
+        batch = positions[batch_start_idx:batch_start_idx + warmup_batch_size]
+        _ = eval_opt.evaluate_batch(batch)
+
+        # Print progress every few iterations
+        if i == 0:
+            first_iter_time = time.time() - warmup_start
+            print(f"  First iteration: {first_iter_time:.1f}s (includes compilation)")
+        elif i == warmup_iterations - 1:
+            total_warmup_time = time.time() - warmup_start
+            avg_iter_time = total_warmup_time / warmup_iterations
+            print(f"  Total warmup: {total_warmup_time:.1f}s ({warmup_iterations} iterations)")
+            print(f"  Average per iteration: {avg_iter_time:.3f}s (post-compilation)")
+
+    print("  ✅ Warmup complete, model fully compiled")
 
     # Benchmark unoptimized
     print("\nBenchmarking UNOPTIMIZED inference...")
