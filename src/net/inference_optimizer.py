@@ -100,7 +100,8 @@ class InferenceOptimizer:
                 example_input = torch.randn(64, 4, 8, 8)
 
             # Move to device and convert to FP16 if needed
-            example_input = example_input.to(model.device)
+            model_device = next(model.parameters()).device
+            example_input = example_input.to(model_device)
             if self.precision == 'fp16':
                 example_input = example_input.half()
 
@@ -117,7 +118,7 @@ class InferenceOptimizer:
                 enabled_precisions={torch.half} if self.precision == 'fp16' else {torch.float},
                 workspace_size=self.tensorrt_workspace_gb * (1 << 30),  # Convert GB to bytes
                 truncate_long_and_double=True,
-                device=model.device
+                device=model_device
             )
 
             logger.info("    ✅ TensorRT compilation successful")
@@ -147,7 +148,8 @@ class InferenceOptimizer:
                 example_input = torch.randn(1, 4, 8, 8)
 
             # Match model's device
-            example_input = example_input.to(model.device)
+            model_device = next(model.parameters()).device
+            example_input = example_input.to(model_device)
 
             # Match model's dtype (check first parameter)
             first_param = next(model.parameters())
