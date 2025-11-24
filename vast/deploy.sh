@@ -99,13 +99,13 @@ echo ""
 # Upload setup script to a temporary accessible location
 # For now, use raw GitHub URL (requires pushing setup.sh to repo first)
 # Alternative: Use vastai's --onstart-cmd with inline script
-SETUP_URL="https://raw.githubusercontent.com/KenStager/Othello/main/vast/setup.sh"
+SETUP_URL="https://raw.githubusercontent.com/KenStager/Othello/feature/resource-optimization/vast/setup.sh"
 
 CREATE_RESULT=$(vastai create instance $SELECTED_OFFER \
     --image pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime \
     --disk 50 \
     --ssh \
-    --onstart-cmd "wget -q $SETUP_URL -O /tmp/setup.sh && chmod +x /tmp/setup.sh && bash /tmp/setup.sh || (cd /workspace && git clone https://github.com/KenStager/Othello.git && cd Othello && pip install pyyaml matplotlib pandas && chmod +x third_party/edax/bin/edax && mkdir -p data/checkpoints data/replay logs runs && nohup python -u scripts/self_play_train.py --config config_cloud_aws.yaml > /workspace/train.log 2>&1 &)" \
+    --onstart-cmd "wget -q $SETUP_URL -O /tmp/setup.sh && chmod +x /tmp/setup.sh && bash /tmp/setup.sh || (cd /workspace && git clone https://github.com/KenStager/Othello.git -b feature/resource-optimization && cd Othello && pip install pyyaml matplotlib pandas && chmod +x third_party/edax/bin/edax && mkdir -p data/checkpoints data/replay logs runs && nohup python -u scripts/self_play_train.py --config config_cloud_aws.yaml > /workspace/train.log 2>&1 &)" \
     --env 'TZ=UTC' \
     --raw \
     2>&1)
