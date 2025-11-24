@@ -2,3 +2,11 @@ numpy>=1.24.0
 torch>=2.2.0
 PyYAML>=6.0
 tqdm>=4.66.0
+tensorboard>=2.14.0
+numba>=0.62.0
+
+# Inference optimization (platform-specific)
+# TensorRT for NVIDIA GPUs (Vast.ai instance)
+# Note: Install manually with: pip install torch-tensorrt --extra-index-url https://pypi.nvidia.com
+# Only works on Linux with CUDA. Not compatible with macOS or Windows.
+# torch-tensorrt>=2.0.0; platform_system == "Linux"

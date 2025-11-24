@@ -30,6 +30,19 @@ mcts:
   batch_size: 64          # Batch size for batched inference
   use_batching: true      # Re-enable batching (provides ~4x speedup)
 
+inference_optimization:   # Platform-aware NN inference optimization (FP16 + TensorRT/TorchScript)
+  enabled: true           # Enable inference optimizations (2-10× speedup)
+  precision: "fp16"       # Options: "fp16" or "fp32"
+                          #   - CUDA (Vast.ai): FP16 provides 1.5-2× speedup
+                          #   - MPS (Mac): Auto-disabled (limited FP16 support, uses FP32)
+                          #   - CPU: No effect
+  use_channels_last: true # Memory format optimization (1.2-1.35× faster on GPU)
+  use_compilation: true   # Platform-specific compilation:
+                          #   - CUDA (Vast.ai): TensorRT (4-10× total with FP16)
+                          #   - MPS (Mac): TorchScript (2.0× total with FP32, tested)
+                          #   - CPU: disabled (limited benefit)
+  tensorrt_workspace_gb: 1  # TensorRT workspace size (CUDA only, ignored on MPS/CPU)
+
 selfplay:
   games_per_iter: 100     # Research-aligned: 100 games per iteration
   num_workers: 1          # Phase 1: Serial mode (parallel implementation has issues)
