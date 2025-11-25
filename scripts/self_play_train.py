@@ -6,6 +6,7 @@ from src.utils.logger import log_print, TSVLogger
 from src.utils.seed import set_seed
 from src.othello.game import Game
 from src.net.model import OthelloNet
+from src.net.inference_optimizer import InferenceOptimizer
 from src.train.replay import ReplayBuffer, ILDataset
 from src.train.selfplay import generate_selfplay
 from src.train.trainer import train_steps
@@ -151,7 +152,19 @@ def main(cfg_path):
 
     # Model
     net = OthelloNet(in_channels=4, channels=cfg['model']['channels'],
-                     residual_blocks=cfg['model']['residual_blocks']).to(device)
+                     residual_blocks=cfg['model']['residual_blocks'])
+
+    # Apply inference optimizations (FP32 + Channels Last)
+    opt_cfg = cfg.get('inference_optimization', {})
+    if opt_cfg.get('enabled', False):
+        log_print("Applying inference optimizations...")
+        optimizer = InferenceOptimizer(config=opt_cfg)
+        net = optimizer.optimize(net, device, example_input=torch.randn(1, 4, 8, 8))
+        log_print("  ✅ Inference optimization complete")
+    else:
+        net = net.to(device)
+        log_print("  ⚠️  Inference optimization disabled, using basic .to(device)")
+
     champion = copy.deepcopy(net).to(device)
 
     # Check for existing checkpoint to resume from
@@ -235,7 +248,8 @@ def main(cfg_path):
         save_dir=cfg['paths']['replay_dir'],
         cleanup_enabled=cleanup_cfg.get('enabled', True),
         cleanup_keep_recent=cleanup_cfg.get('keep_recent', 3),
-        cleanup_keep_milestone_every=cleanup_cfg.get('keep_milestone_every', 50000)
+        cleanup_keep_milestone_every=cleanup_cfg.get('keep_milestone_every', 50000),
+        cleanup_max_milestones=cleanup_cfg.get('max_milestones', 10)
     )
 
     # IL Dataset (Imitation Learning bootstrap from expert games)
@@ -252,10 +266,23 @@ def main(cfg_path):
             il_data = None
 
     # Oracle (Endgame exact solver using Edax)
+    # Create two oracle instances: one for self-play, one for gating (faster evaluation)
     oracle = create_oracle(cfg)
+
+    # Create separate oracle for gating with lower threshold
+    gating_threshold = cfg.get('oracle', {}).get('gating_empties_threshold', cfg.get('oracle', {}).get('empties_threshold', 14))
     if cfg.get('oracle', {}).get('use', False):
+        from src.train.oracle import EdaxOracle
+        oracle_gating = EdaxOracle(
+            edax_path=cfg['oracle']['edax_path'],
+            time_limit_ms=cfg['oracle']['time_limit_ms'],
+            empties_threshold=gating_threshold
+        )
         log_print(f"Oracle enabled: Edax solver for endgame positions")
-        log_print(f"  Threshold: empties <= {cfg['oracle']['empties_threshold']}")
+        log_print(f"  Self-play threshold: empties <= {cfg['oracle']['empties_threshold']}")
+        log_print(f"  Gating threshold: empties <= {gating_threshold}")
+    else:
+        oracle_gating = oracle  # Use same dummy oracle if disabled
 
     # Opening Suite (diverse starting positions for self-play)
     opening_suite = None
@@ -314,6 +341,28 @@ def main(cfg_path):
                 eta_min=eta_min
             )
             log_print(f"LR Scheduler: CosineAnnealingWarmRestarts(T_0={T_0}, T_mult={T_mult}, eta_min={eta_min:.2e})")
+        elif scheduler_type == 'cosine':
+            from torch.optim.lr_scheduler import CosineAnnealingLR
+            T_max = scheduler_cfg.get('T_max', 1000)
+            eta_min = scheduler_cfg.get('eta_min', cfg['train']['lr_min'])
+
+            scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=T_max,
+                eta_min=eta_min
+            )
+            log_print(f"LR Scheduler: CosineAnnealingLR(T_max={T_max}, eta_min={eta_min:.2e})")
+        elif scheduler_type == 'multistep':
+            from torch.optim.lr_scheduler import MultiStepLR
+            milestones = scheduler_cfg.get('milestones', [100, 300, 500])
+            gamma = scheduler_cfg.get('gamma', 0.1)
+
+            scheduler = MultiStepLR(
+                optimizer,
+                milestones=milestones,
+                gamma=gamma
+            )
+            log_print(f"LR Scheduler: MultiStepLR(milestones={milestones}, gamma={gamma})")
         else:
             log_print(f"Warning: Unknown scheduler type '{scheduler_type}', using fixed LR")
     else:
@@ -329,18 +378,70 @@ def main(cfg_path):
                     try:
                         optimizer.load_state_dict(checkpoint['optimizer_state'])
                         log_print(f"  Loaded optimizer state from checkpoint")
+
+                        # Explicitly reset LR to config value (prevents checkpoint LR override)
+                        config_lr = cfg['train']['lr']
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = config_lr
+                        log_print(f"  Reset optimizer LR to config value: {config_lr:.2e}")
+
                     except Exception as e:
                         log_print(f"  Warning: Failed to load optimizer state: {e}")
 
-                # Load scheduler state
+                # Load scheduler state (only if scheduler type AND parameters match)
                 if 'scheduler_state' in checkpoint and checkpoint['scheduler_state'] and scheduler and cfg.get('checkpoint', {}).get('save_scheduler', True):
-                    try:
-                        scheduler.load_state_dict(checkpoint['scheduler_state'])
-                        log_print(f"  Loaded scheduler state from checkpoint")
-                    except Exception as e:
-                        log_print(f"  Warning: Failed to load scheduler state: {e}")
+                    saved_sched_type = checkpoint.get('scheduler_type', None)
+                    current_sched_type = scheduler_cfg.get('type', 'cosine_warmrestarts')
+
+                    if saved_sched_type == current_sched_type:
+                        # Check if scheduler parameters also match (not just type)
+                        saved_sched_config = checkpoint.get('scheduler_config', {})
+                        current_sched_config = {
+                            'milestones': scheduler_cfg.get('milestones'),
+                            'gamma': scheduler_cfg.get('gamma'),
+                            'T_0': scheduler_cfg.get('T_0'),
+                            'eta_min': scheduler_cfg.get('eta_min')
+                        }
+
+                        # Compare relevant parameters based on scheduler type
+                        params_match = True
+                        if saved_sched_type == 'multistep':
+                            params_match = (
+                                saved_sched_config.get('milestones') == current_sched_config.get('milestones') and
+                                saved_sched_config.get('gamma') == current_sched_config.get('gamma')
+                            )
+                        elif saved_sched_type == 'cosine_warmrestarts':
+                            params_match = (
+                                saved_sched_config.get('T_0') == current_sched_config.get('T_0') and
+                                saved_sched_config.get('eta_min') == current_sched_config.get('eta_min')
+                            )
+
+                        if params_match:
+                            try:
+                                scheduler.load_state_dict(checkpoint['scheduler_state'])
+                                log_print(f"  Loaded scheduler state from checkpoint")
+                            except Exception as e:
+                                log_print(f"  Warning: Failed to load scheduler state: {e}")
+                        else:
+                            log_print(f"  Scheduler parameters changed:")
+                            log_print(f"    Saved:   {saved_sched_config}")
+                            log_print(f"    Current: {current_sched_config}")
+                            log_print(f"  Using fresh scheduler initialization (LR = {cfg['train']['lr']:.2e})")
+                    else:
+                        log_print(f"  Scheduler type changed ({saved_sched_type} → {current_sched_type})")
+                        log_print(f"  Using fresh scheduler initialization (LR = {cfg['train']['lr']:.2e})")
         except Exception as e:
             log_print(f"Warning: Failed to load optimizer/scheduler state: {e}")
+
+    # Validate actual LR matches config after all loading is complete
+    actual_lr = optimizer.param_groups[0]['lr']
+    config_lr = cfg['train']['lr']
+    if abs(actual_lr - config_lr) > 1e-10:
+        log_print(f"  ⚠️  WARNING: LR mismatch!")
+        log_print(f"    Actual LR:  {actual_lr:.2e}")
+        log_print(f"    Config LR:  {config_lr:.2e}")
+    else:
+        log_print(f"  ✓ LR validation passed: {actual_lr:.2e}")
 
     game_cls = lambda: Game(cfg['game']['board_size'])
     mcts_cfg = dict(
@@ -389,6 +490,7 @@ def main(cfg_path):
             oracle=oracle,
             opening_suite=opening_suite,
             num_workers=cfg['selfplay'].get('num_workers', 1),
+            model_cfg=cfg['model'],
             verbose=verbose
             )
             print(f"🔍 DEBUG: generate_selfplay returned, added={added}", flush=True)
@@ -518,7 +620,7 @@ def main(cfg_path):
                               simulations=max(50, cfg['mcts']['simulations']//2),
                               dir_alpha=None, dir_frac=0.0, reuse_tree=False),
                 games=gate_games,
-                oracle=oracle,
+                oracle=oracle_gating,  # Use gating oracle with lower threshold
                 opening_suite=opening_suite,
                 verbose=verbose
             )
@@ -532,7 +634,11 @@ def main(cfg_path):
                 log_print(f"\n[Gating Summary]")
                 log_print(f"  Results: {wins}W / {losses}L / {draws}D")
                 log_print(f"  Win rate: {winrate:.1%} (threshold: {cfg['gate']['promote_win_rate']:.1%})")
-                log_print(f"  Loss rate: {new_loss_rate:.1%} (max: {cfg['gate'].get('max_loss_rate_multiplier', 1.10) * champ_loss_rate:.1%})")
+                max_loss_mult = cfg['gate'].get('max_loss_rate_multiplier', None)
+                if max_loss_mult is not None:
+                    log_print(f"  Loss rate: {new_loss_rate:.1%} (max: {max_loss_mult * champ_loss_rate:.1%})")
+                else:
+                    log_print(f"  Loss rate: {new_loss_rate:.1%} (no limit)")
                 log_print(f"  Avg moves: {avg_moves:.1f}, Avg score margin: ±{avg_score:.1f}\n")
             else:
                 log_print(f"Gating (mini): W/L/D = {wins}/{losses}/{draws} (winrate={winrate:.2%}, loss_rate={new_loss_rate:.2%})")
@@ -562,15 +668,18 @@ def main(cfg_path):
                     tb_writer.add_scalar('gate/avg_moves', avg_moves, it)
                     tb_writer.add_scalar('gate/avg_score_margin', avg_score, it)
 
-            # Promote if good: win rate >= threshold AND loss rate doesn't worsen
+            # Promote if good: win rate >= threshold (AlphaZero standard)
             # Stage 2: Champion warm-up - skip promotion for first 5 iterations (warmup_iters defined above)
-            max_loss_mult = cfg['gate'].get('max_loss_rate_multiplier', 1.10)
+            max_loss_mult = cfg['gate'].get('max_loss_rate_multiplier', None)
             should_promote = (
                 it > warmup_iters and  # Skip promotion during warm-up
                 (wins + losses) > 0 and
-                winrate >= cfg['gate']['promote_win_rate'] and
-                new_loss_rate <= max_loss_mult * champ_loss_rate
+                winrate >= cfg['gate']['promote_win_rate']
             )
+
+            # Optional loss rate check (if configured)
+            if max_loss_mult is not None and should_promote:
+                should_promote = should_promote and (new_loss_rate <= max_loss_mult * champ_loss_rate)
 
             if should_promote:
                 champion = copy.deepcopy(net).to(device)
@@ -584,6 +693,13 @@ def main(cfg_path):
                     'model_state': champion.state_dict(),
                     'optimizer_state': optimizer.state_dict() if cfg.get('checkpoint', {}).get('save_optimizer', True) else None,
                     'scheduler_state': scheduler.state_dict() if scheduler and cfg.get('checkpoint', {}).get('save_scheduler', True) else None,
+                    'scheduler_type': scheduler_cfg.get('type') if scheduler else None,
+                    'scheduler_config': {
+                        'milestones': scheduler_cfg.get('milestones'),
+                        'gamma': scheduler_cfg.get('gamma'),
+                        'T_0': scheduler_cfg.get('T_0'),
+                        'eta_min': scheduler_cfg.get('eta_min')
+                    } if scheduler else None,
                     'iteration': it,
                     'champ_loss_rate': champ_loss_rate,
                     'buffer_size': replay.size(),
@@ -615,6 +731,13 @@ def main(cfg_path):
                     'model_state': net.state_dict(),
                     'optimizer_state': optimizer.state_dict() if cfg.get('checkpoint', {}).get('save_optimizer', True) else None,
                     'scheduler_state': scheduler.state_dict() if scheduler and cfg.get('checkpoint', {}).get('save_scheduler', True) else None,
+                    'scheduler_type': scheduler_cfg.get('type') if scheduler else None,
+                    'scheduler_config': {
+                        'milestones': scheduler_cfg.get('milestones'),
+                        'gamma': scheduler_cfg.get('gamma'),
+                        'T_0': scheduler_cfg.get('T_0'),
+                        'eta_min': scheduler_cfg.get('eta_min')
+                    } if scheduler else None,
                     'iteration': it,
                     'champ_loss_rate': champ_loss_rate,
                     'buffer_size': replay.size(),
