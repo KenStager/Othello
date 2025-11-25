@@ -489,7 +489,6 @@ def main(cfg_path):
             oracle=oracle,
             opening_suite=opening_suite,
             num_workers=cfg['selfplay'].get('num_workers', 1),
-            model_cfg=cfg['model'],
             verbose=verbose
             )
             print(f"🔍 DEBUG: generate_selfplay returned, added={added}", flush=True)
