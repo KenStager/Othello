@@ -248,8 +248,7 @@ def main(cfg_path):
         save_dir=cfg['paths']['replay_dir'],
         cleanup_enabled=cleanup_cfg.get('enabled', True),
         cleanup_keep_recent=cleanup_cfg.get('keep_recent', 3),
-        cleanup_keep_milestone_every=cleanup_cfg.get('keep_milestone_every', 50000),
-        cleanup_max_milestones=cleanup_cfg.get('max_milestones', 10)
+        cleanup_keep_milestone_every=cleanup_cfg.get('keep_milestone_every', 50000)
     )
 
     # IL Dataset (Imitation Learning bootstrap from expert games)
