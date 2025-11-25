@@ -44,8 +44,8 @@ inference_optimization:   # Eager mode inference optimization (Channels Last)
 
 selfplay:
   games_per_iter: 100     # Research-aligned: 100 games per iteration
-  num_workers: 4          # ProcessPoolExecutor with 4 workers (each gets own model copy)
-  use_inference_server: false  # DISABLED: ThreadPoolExecutor causes CUDA deadlock (use ProcessPoolExecutor instead)
+  num_workers: 1          # Single worker (BOTH Thread+ProcessPool deadlock - needs investigation)
+  use_inference_server: false  # DISABLED: All parallel execution paths deadlock
   max_moves: 120
   save_every_iters: 1
   temp_schedule:          # Ablation Config C: Gentle extended schedule (reduces score margins to ±14.6 discs)
