@@ -26,9 +26,9 @@ def softmax_masked(logits, mask, temp=1.0):
     return exp / s
 
 class MCTS:
-    def __init__(self, game_cls, net, device, cpuct=1.5, simulations=200,
+    def __init__(self, game_cls, net=None, device=None, cpuct=1.5, simulations=200,
                  dir_alpha=0.15, dir_frac=0.25, reuse_tree=True, use_tt=True,
-                 batch_size=32, use_batching=True):
+                 batch_size=32, use_batching=True, batch_evaluator=None):
         self.game_cls = game_cls
         self.net = net
         self.device = device
@@ -46,7 +46,11 @@ class MCTS:
         # Stage 1 Batching: Add batch evaluator
         self.batch_size = batch_size
         self.use_batching = use_batching
-        if use_batching:
+
+        # Use provided batch_evaluator, or create default one
+        if batch_evaluator is not None:
+            self.batch_evaluator = batch_evaluator
+        elif use_batching:
             self.batch_evaluator = SimpleBatchEvaluator(net, device, batch_size)
         else:
             self.batch_evaluator = DirectEvaluator(net, device)
@@ -140,24 +144,21 @@ class MCTS:
 
         Simplified approach without virtual loss - collects leaves sequentially
         but evaluates them in batches for GPU efficiency.
+
+        Root expansion is now batched with first simulation for efficiency.
         """
-        # Initialize root (always create new root for Stage 1, no TT)
-        probs, value, mask = self._policy_value(board)
-        self.root = MCTSNode(prior=probs, player_to_move=board.player)
-        self.root.is_expanded = True
-        self.root.valid_mask = mask
+        # Initialize unexpanded root stub (will be expanded in first batch)
+        # Use uniform prior as placeholder - will be replaced after evaluation
+        uniform_prior = np.ones(65) / 65
+        self.root = MCTSNode(prior=uniform_prior, player_to_move=board.player)
+        self.root.is_expanded = False  # Mark as unexpanded
         self.root.terminal = board.is_terminal()
 
-        # Dirichlet noise at root
-        if self.dir_alpha is not None and self.dir_frac and self.dir_frac > 0:
-            valid_idx = np.where(mask > 0.0)[0]
-            if len(valid_idx) > 1:
-                noise = np.random.dirichlet([self.dir_alpha] * len(valid_idx))
-                P = self.root.P.copy()
-                P[valid_idx] = (1 - self.dir_frac) * P[valid_idx] + self.dir_frac * noise
-                self.root.P = P
+        # Queue root for batch evaluation by adding to first simulation
+        board_root = board.copy()
+        self.leaf_queue.append((self.root, board_root, []))
 
-        # Collect leaves for batching
+        # Collect leaves for batching (starting from simulation 1, root queued above)
         for _ in range(self.simulations):
             board_copy = board.copy()
             self._select_leaf_for_batch(board_copy, self.root, [])
@@ -170,6 +171,17 @@ class MCTS:
         if self.leaf_queue:
             self._flush_leaf_batch()
 
+        # Apply Dirichlet noise at root AFTER expansion
+        if self.dir_alpha is not None and self.dir_frac and self.dir_frac > 0:
+            mask = self.root.valid_mask
+            if mask is not None:
+                valid_idx = np.where(mask > 0.0)[0]
+                if len(valid_idx) > 1:
+                    noise = np.random.dirichlet([self.dir_alpha] * len(valid_idx))
+                    P = self.root.P.copy()
+                    P[valid_idx] = (1 - self.dir_frac) * P[valid_idx] + self.dir_frac * noise
+                    self.root.P = P
+
         # Return visit counts as policy
         N = self.root.N.astype(np.float32)
         if N.sum() == 0:
@@ -179,14 +191,12 @@ class MCTS:
         return pi
 
     def _expand_root(self, board):
-        planes = board.encode()[None, ...]  # (1,4,8,8)
-        import torch
-        with torch.no_grad():
-            output = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
-            logits = output.policy_logits[0].cpu().numpy()
-            value = float(output.value_win[0].cpu().item())
+        # Use batch evaluator for inference
+        state = board.encode()
+        policy_logits, value = self.batch_evaluator.evaluate_batch([state])[0]
+
         mask = board.valid_action_mask()
-        probs = softmax_masked(logits, mask, temp=1.0)
+        probs = softmax_masked(policy_logits, mask, temp=1.0)
         node = MCTSNode(prior=probs, player_to_move=board.player)
         node.is_expanded = True
         node.valid_mask = mask
@@ -195,14 +205,12 @@ class MCTS:
         return node
 
     def _policy_value(self, board):
-        planes = board.encode()[None, ...]
-        import torch
-        with torch.no_grad():
-            output = self.net(torch.tensor(planes, dtype=torch.float32, device=self.device))
-            logits = output.policy_logits[0].cpu().numpy()
-            value = float(output.value_win[0].cpu().item())
+        # Use batch evaluator for inference
+        state = board.encode()
+        policy_logits, value = self.batch_evaluator.evaluate_batch([state])[0]
+
         mask = board.valid_action_mask()
-        probs = softmax_masked(logits, mask, temp=1.0)
+        probs = softmax_masked(policy_logits, mask, temp=1.0)
         return probs, value, mask
 
     def _simulate(self, board, node, depth=0, max_depth=100):

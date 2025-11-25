@@ -44,7 +44,8 @@ inference_optimization:   # Eager mode inference optimization (Channels Last)
 
 selfplay:
   games_per_iter: 100     # Research-aligned: 100 games per iteration
-  num_workers: 1          # Phase 1: Serial mode (parallel implementation has issues)
+  num_workers: 4          # Parallel workers for cross-game batching (up from 1)
+  use_inference_server: true  # Enable InferenceServer for shared GPU inference
   max_moves: 120
   save_every_iters: 1
   temp_schedule:          # Ablation Config C: Gentle extended schedule (reduces score margins to ±14.6 discs)
